@@ -181,7 +181,7 @@ def run_skyseg(onnx_session, input_size, image):
     return onnx_result
 
 def filter_and_prepare_points(predictions, conf_threshold, mask_sky=False, mask_black_bg=False, 
-                             mask_white_bg=False, stride=1, prediction_mode="Depthmap and Camera Branch"):
+                             mask_white_bg=False, stride=1, prediction_mode="Pointmap"):
     """
     Filter points based on confidence and prepare for COLMAP format.
     Implementation matches the conventions in the original VGGT code.
@@ -315,6 +315,7 @@ def filter_and_prepare_points(predictions, conf_threshold, mask_sky=False, mask_
     points3D = []
     point_indices = {}
     image_points2D = [[] for _ in range(len(pred_world_points))]
+    final_conf_values = []  # List to store confidence values for final points
     
     print(f"Preparing points for COLMAP format with stride {stride}...")
     
@@ -356,6 +357,7 @@ def filter_and_prepare_points(predictions, conf_threshold, mask_sky=False, mask_
                         "track": [(img_idx, len(image_points2D[img_idx]))]
                     }
                     points3D.append(point_entry)
+                    final_conf_values.append(conf[flat_idx])  # Store confidence value for this point
                     total_points += 1
                 else:
                     point_idx = point_indices[point_hash]
@@ -364,7 +366,8 @@ def filter_and_prepare_points(predictions, conf_threshold, mask_sky=False, mask_
                 image_points2D[img_idx].append((x, y, point_indices[point_hash]))
     
     print(f"Prepared {len(points3D)} 3D points with {sum(len(pts) for pts in image_points2D)} observations for COLMAP")
-    return points3D, image_points2D
+    final_conf_values = np.array(final_conf_values)
+    return points3D, image_points2D, final_conf_values
 
 def hash_point(point, scale=100):
     """Create a hash for a 3D point by quantizing coordinates."""
@@ -522,6 +525,12 @@ def write_colmap_points3D_bin(file_path, points3D):
             for img_id, point2d_idx in track:
                 fid.write(struct.pack('<II', img_id + 1, point2d_idx))
 
+def write_colmap_confidence_npy(file_path, confidence_values):
+    """Write confidence values to a numpy file for confidence-aware optimization."""
+    print(f"Saving {len(confidence_values)} confidence values to {file_path}")
+    np.save(file_path, confidence_values)
+    print(f"Confidence values saved with shape: {confidence_values.shape}")
+
 def main():
     parser = argparse.ArgumentParser(description="Convert images to COLMAP format using VGGT")
     parser.add_argument("--image_dir", type=str, required=True, 
@@ -556,7 +565,7 @@ def main():
     quaternions, translations = extrinsic_to_colmap_format(predictions["extrinsic"])
     
     print(f"Filtering points with confidence threshold {args.conf_threshold}% and stride {args.stride}...")
-    points3D, image_points2D = filter_and_prepare_points(
+    points3D, image_points2D, final_conf_values = filter_and_prepare_points(
         predictions, 
         args.conf_threshold, 
         mask_sky=args.mask_sky, 
@@ -579,6 +588,11 @@ def main():
         write_colmap_points3D_bin(
             os.path.join(args.output_dir, "points3D.bin"), 
             points3D)
+        # Save confidence values for final points
+        write_colmap_confidence_npy(
+            os.path.join(args.output_dir, "confidence_dsp.npy"),
+            final_conf_values
+        )
     else:
         write_colmap_cameras_txt(
             os.path.join(args.output_dir, "cameras.txt"), 
@@ -589,6 +603,11 @@ def main():
         write_colmap_points3D_txt(
             os.path.join(args.output_dir, "points3D.txt"), 
             points3D)
+        # Save confidence values for final points
+        write_colmap_confidence_npy(
+            os.path.join(args.output_dir, "confidence_dsp.npy"),
+            final_conf_values
+        )
     
     print(f"COLMAP files successfully written to {args.output_dir}")
 
