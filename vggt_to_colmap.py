@@ -528,6 +528,8 @@ def write_colmap_points3D_bin(file_path, points3D):
 def write_colmap_confidence_npy(file_path, confidence_values):
     """Write confidence values to a numpy file for confidence-aware optimization."""
     print(f"Saving {len(confidence_values)} confidence values to {file_path}")
+    # Reshape to [n, 1] to fix the error: ValueError: Invalid per_point_lr shape
+    confidence_values = np.array(confidence_values).reshape(-1, 1)
     np.save(file_path, confidence_values)
     print(f"Confidence values saved with shape: {confidence_values.shape}")
 
